@@ -300,7 +300,6 @@ species_data_relativized <- species_data_relativized[!((species_data_relativized
 # Save the results
 write.csv(species_data_relativized, "species_data_relativized.csv", row.names = FALSE)
 
-
 # Calculate Bray-Curtis dissimilarity matrix
 bc_dist <- vegdist(sqrt(species_data_relativized[, -c(1,2,3,4)]), method = "bray")
 
@@ -333,21 +332,11 @@ unique_year_months <- unique(nmds_data$year_month)
 stress_value <- nmds$stress
 
 
-# Create the 4-panel figure
-
-# legend <- get_legend(
-#   ggplot(nmds_data, aes(x = NMDS1, y = NMDS2, color = year_month)) +
-#     scale_color_manual(values = year_month_colors, name = "Year-Month") +
-#     guides(color = guide_legend(title.position = "top", title.hjust = 0.5))
-# )
-
-
 hull_data <- function(nmds_data) {
   nmds_data %>% 
     group_by(year_group) %>% 
     slice(chull(NMDS1, NMDS2))
 }
-
 
 
 nmds_data <- nmds_data %>%
@@ -523,107 +512,174 @@ library(patchwork)
 ggsave("Heron NMDS Figure 5.pdf", width = 10, height = 8, bg = "white")
 
 
+## Within-zone, across-time compositional testing + dispersion checks
 
+## PART 1: Dispersion (homoscedasticity) checks for the whole model
+## PERMANOVA assumes similar within-group spread across groups; if that assumption fails, a significant PERMANOVA
+## result may partly reflect differing dispersion rather than a true
+## difference in community composition (centroid location).
 
+species_data_relativized$geomorphic_zones <- factor(species_data_relativized$geomorphic_zones)
+species_data_relativized$year <- factor(species_data_relativized$year)
 
+# Dispersion across ZONES (main effect)
+bd_zone <- betadisper(bc_dist, group = species_data_relativized$geomorphic_zones)
+disp_test_zone <- permutest(bd_zone, permutations = 999, pairwise = TRUE)
+print(disp_test_zone)
 
+# Dispersion across YEARS (main effect)
+bd_year <- betadisper(bc_dist, group = species_data_relativized$year)
+disp_test_year <- permutest(bd_year, permutations = 999, pairwise = TRUE)
+print(disp_test_year)
 
+# Dispersion across the ZONE x YEAR interaction (matches the design of
+# the adonis2(bc_dist ~ geomorphic_zones * year) model directly)
+bd_int <- betadisper(bc_dist, group = interaction(species_data_relativized$geomorphic_zones,
+                                                  species_data_relativized$year))
+disp_test_int <- permutest(bd_int, permutations = 999, pairwise = TRUE)
+print(disp_test_int)
 
+# Export dispersion test summaries
+write.csv(as.data.frame(disp_test_zone$tab), "dispersion_test_zone.csv")
+write.csv(as.data.frame(disp_test_year$tab), "dispersion_test_year.csv")
+write.csv(as.data.frame(disp_test_int$tab), "dispersion_test_zone_by_year.csv")
 
+## If disp_test_zone (or _year, or _int) comes back significant
+## (p < .05), note that explicitly the
+## corresponding PERMANOVA result -- it means some of that PERMANOVA
+## signal could reflect unequal spread rather than a pure shift in
+## community composition, and should be reported as a caveat rather
+## than silently ignored.
 
+## PART 2: Dispersion checks WITHIN each zone, across time
+## (the more directly relevant check for the within-zone pairwise
+## time comparisons below)
 
+bc_mat <- as.matrix(bc_dist)
+zone_names <- levels(species_data_relativized$geomorphic_zones)
 
+zone_dispersion_results <- lapply(zone_names, function(zn){
+  idx <- which(species_data_relativized$geomorphic_zones == zn)
+  zone_dist <- as.dist(bc_mat[idx, idx])
+  zone_year <- factor(species_data_relativized$year[idx])
+  
+  bd <- betadisper(zone_dist, group = zone_year)
+  permutest(bd, permutations = 999, pairwise = TRUE)
+})
+names(zone_dispersion_results) <- zone_names
 
+# Print each zone's within-zone dispersion test
+for (zn in zone_names) {
+  cat("\n====", zn, "====\n")
+  print(zone_dispersion_results[[zn]])
+}
 
+for (zn in zone_names) {
+  write.csv(as.data.frame(zone_dispersion_results[[zn]]$tab),
+            paste0("dispersion_test_within_", gsub(" ", "_", zn), ".csv"))
+}
 
-### extra non-neccessary steps
-
-# Perform betadisper analysis
-bd <- betadisper(bc_dist, group = nmds_data$year)
-# Perform permutation test for homogeneity of multivariate dispersions
-perm_test <- permutest(bd, pairwise = TRUE, permutations = 999)
-# Print the results
-print(perm_test)
-
-bd_int <- betadisper(bc_dist, group = interaction(nmds_data$geomorphic_zones, nmds_data$year))
-perm_test_int <- permutest(bd_int, pairwise = TRUE, permutations = 999)
-print(perm_test_int)
-
-
-# Perform PERMANOVA and pairwise PERMANOVA
-species_data$year <- as.factor(species_data$year)
-species_data$month <- as.factor(species_data$month)
-
-permanova_result <- adonis2(bc_dist ~  geomorphic_zones * year, data = species_data, permutations = 999, by = "terms")
-print(permanova_result)
-
-write.csv(permanova_result, "permanova_result.csv", row.names = FALSE)
+## PART 3: Pairwise PERMANOVA across time, WITHIN each zone
+## -> "did community composition change between any two years,
+##    specifically within this zone?" -- the multivariate analog of
+##    the GLMM's zone-specific baseline contrasts.
 
 source("https://raw.githubusercontent.com/pmartinezarbizu/pairwiseAdonis/master/pairwiseAdonis/R/pairwise.adonis.R")
 
-geo_groups <- species_data$geomorphic_zones
-geo_pairwise <- pairwise.adonis(bc_dist, geo_groups, p.adjust.m = "bonferroni")
-print(geo_pairwise)
-geo_p_values <- geo_pairwise$p.adjusted
-print(geo_p_values)
-write.csv(geo_pairwise, "geo_pairwise.csv", row.names = FALSE)
+zone_time_pairwise <- lapply(zone_names, function(zn){
+  idx <- which(species_data_relativized$geomorphic_zones == zn)
+  zone_dist <- as.dist(bc_mat[idx, idx])
+  zone_year <- factor(species_data_relativized$year[idx])
+  
+  # Omnibus test: does composition differ across time at all within this zone?
+  omnibus <- adonis2(zone_dist ~ zone_year, permutations = 999)
+  
+  # Pairwise year-vs-year comparisons within this zone
+  pairwise <- pairwise.adonis(zone_dist, zone_year, p.adjust.m = "bonferroni")
+  
+  list(zone = zn, omnibus = omnibus, pairwise = pairwise)
+})
+names(zone_time_pairwise) <- zone_names
 
-year_groups <- species_data$year
-year_pairwise <- pairwise.adonis(bc_dist, year_groups, p.adjust.m = "bonferroni")
-print(year_pairwise)
-year_p_values <- year_pairwise$p.adjusted
-write.csv(year_pairwise, "year_pairwise.csv", row.names = FALSE)
+# Print and export
+for (zn in zone_names) {
+  cat("\n====", zn, ": omnibus PERMANOVA across years ====\n")
+  print(zone_time_pairwise[[zn]]$omnibus)
+  
+  cat("\n====", zn, ": pairwise year comparisons ====\n")
+  print(zone_time_pairwise[[zn]]$pairwise)
+  
+  write.csv(zone_time_pairwise[[zn]]$pairwise,
+            paste0("permanova_pairwise_within_", gsub(" ", "_", zn), ".csv"),
+            row.names = FALSE)
+}
 
-geo_year_groups <- interaction(species_data$geomorphic_zones, species_data$year)
-view(geo_year_groups)
-geo_year_pairwise <- pairwise.adonis(bc_dist, geo_year_groups, p.adjust.m = "bonferroni")
-print(geo_year_pairwise)
-geo_year_p_values <- geo_year_pairwise$p.adjusted
-write.csv(geo_year_pairwise, "geo_year_pairwise.csv", row.names = FALSE)
+## PART 4: Combined summary table -- one row per zone x year-pair,
+## with BOTH the PERMANOVA result and a flag for whether dispersion
+## differed for that same zone (so you know which PERMANOVA results
+## to interpret cautiously)
+summary_table <- do.call(rbind, lapply(zone_names, function(zn){
+  pw <- zone_time_pairwise[[zn]]$pairwise
+  pw$zone <- zn
+  pw$zone_dispersion_p <- zone_dispersion_results[[zn]]$tab$`Pr(>F)`[1]
+  pw
+}))
 
-#pairwise_p_values <- sapply(pairwise_permanova$p.adjusted, function(x) x)
+summary_table$dispersion_caveat <- ifelse(summary_table$zone_dispersion_p < 0.05,
+                                          "CAUTION: dispersion differs within this zone across years -- PERMANOVA result may partly reflect spread, not just centroid shift",
+                                          "dispersion homogeneous -- PERMANOVA result reflects centroid shift")
+
+write.csv(summary_table, "permanova_pairwise_within_zone_summary.csv", row.names = FALSE)
 
 
-# Filter species_data to only include the "reef flat" geomorphic zone
-reef_flat_data <- subset(species_data, geomorphic_zones == "Reef Flat")
-# Create the geo_year_groups variable for the reef flat data
-geo_year_groups <- interaction(reef_flat_data$geomorphic_zones, reef_flat_data$year)
-view(geo_year_groups)
-geo_year_pairwise <- pairwise.adonis(bc_dist, geo_year_groups, p.adjust.m = "bonferroni")
+
+## Restricted pairwise PERMANOVA: only the three disturbance-relevant
+## year comparisons per zone (2019 vs 2024, 2019 vs 2025, 2024 vs 2025)
+## instead of all 21 possible year pairs. This matches what the paper
+## actually claims (pre-disturbance vs peak bleaching vs post-cyclone)
+## and avoids paying a correction penalty for 18 comparisons that
+## aren't part of the argument.
+
+target_years <- c(2019, 2024, 2025)
+
+zone_time_pairwise_targeted <- lapply(zone_names, function(zn){
+  idx <- which(species_data_relativized$geomorphic_zones == zn &
+                 species_data_relativized$year %in% target_years)
+  zone_dist <- as.dist(bc_mat[idx, idx])
+  zone_year <- factor(species_data_relativized$year[idx], levels = target_years)
+  
+  pairwise <- pairwise.adonis(zone_dist, zone_year, p.adjust.m = "bonferroni")
+  list(zone = zn, pairwise = pairwise)
+})
+names(zone_time_pairwise_targeted) <- zone_names
+
+for (zn in zone_names) {
+  cat("\n====", zn, ": targeted pairwise (2019 / 2024 / 2025) ====\n")
+  print(zone_time_pairwise_targeted[[zn]]$pairwise)
+  
+  write.csv(zone_time_pairwise_targeted[[zn]]$pairwise,
+            paste0("permanova_pairwise_targeted_", gsub(" ", "_", zn), ".csv"),
+            row.names = FALSE)
+}
+
+## ------------------------------------------------------------
+## Combined summary across all four zones, for a single glance at
+## which disturbance-transition comparisons are significant
+## ------------------------------------------------------------
+targeted_summary <- do.call(rbind, lapply(zone_names, function(zn){
+  df <- zone_time_pairwise_targeted[[zn]]$pairwise
+  df$zone <- zn
+  df
+}))
+
+targeted_summary <- targeted_summary[, c("zone", "pairs", "F.Model", "R2", "p.value", "p.adjusted", "sig")]
+targeted_summary
+
+write.csv(targeted_summary, "permanova_pairwise_targeted_summary.csv", row.names = FALSE)
 
 
-# For geo p-values
-# Assuming you have the geo_p_values object
-geo_p_matrix <- matrix(geo_p_values, nrow = length(levels(geo_groups)), 
-                        ncol = length(levels(geo_groups)))
-# Set the row and column names
-colnames(geo_p_matrix) <- rownames(geo_p_matrix) <- levels(geo_groups)
 
-# Create the ggplot
-ggplot(data = reshape2::melt(geo_p_matrix), aes(x = Var1, y = Var2, fill = value)) +
-  geom_tile() +
-  scale_fill_gradient(low = "red", high = "white") +
-  theme_minimal() +
-  labs(title = "Pairwise PERMANOVA p-values for Bank", x = "Geo", y = "Geo")
+targeted_summary$p.adjusted_holm <- ave(targeted_summary$p.value, targeted_summary$zone,
+                                        FUN = function(p) p.adjust(p, method = "holm"))
+targeted_summary
 
-# For year p-values
-year_p_matrix <- matrix(year_p_values, nrow = length(levels(year_groups)), 
-                        ncol = length(levels(year_groups)))
-colnames(year_p_matrix) <- rownames(year_p_matrix) <- levels(year_groups)
-
-ggplot(data = reshape2::melt(year_p_matrix), aes(x = Var1, y = Var2, fill = value)) +
-  geom_tile() +
-  scale_fill_gradient(low = "red", high = "white") +
-  theme_minimal() +
-  labs(title = "Pairwise PERMANOVA p-values for Year", x = "Year", y = "Year")
-
-# For geo-year interaction p-values
-geo_year_p_matrix <- matrix(geo_year_p_values, nrow = length(levels(geo_year_groups)), 
-                             ncol = length(levels(geo_year_groups)))
-colnames(geo_year_p_matrix) <- rownames(geo_year_p_matrix) <- levels(geo_year_groups)
-
-ggplot(data = reshape2::melt(geo_year_p_matrix), aes(x = Var1, y = Var2, fill = value)) +
-  geom_tile() +
-  scale_fill_gradient(low = "red", high = "white") +
-  theme_minimal() +
-  labs(title = "Pairwise PERMANOVA p-values for Bank and Year Interaction", x = "Geo:Year", y = "Geo:Year")

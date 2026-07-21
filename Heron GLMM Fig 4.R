@@ -181,16 +181,12 @@ names(df)[names(df) == "Acroporidae..Acropora.spp..Tabulate.Bleached"] <- "Tabul
 
 names(df)[names(df) == "Free.Living.Bleached"] <- "Free_Living_Bleached_corals"
 
-colnames(df)
-
 # Checks
 str(df)
 
 summary(df)
 
 colnames(df)
-summary(df)
-
 
 # Combining Hard Corals for GAMS solely
 Live_hard_coral_columns <- c("Corymbose_corals", "Tabulate_corals", "Massive_Encrusting_corals", "Digitate_corals", "Free_Living_corals", "Branching_corals", "Plate_Foliose_corals")
@@ -217,10 +213,8 @@ print(unique_sites)
 df$date <- as.Date(df$date)
 df$year <- year(df$date)
 
-# Assuming your dataframe is called 'df'
 column_names <- names(df)
 
-# Print the column names
 print(column_names)
 
 df <- df %>%
@@ -264,7 +258,7 @@ species_columns <- c("Live_Hard_coral", "EAM_Reef_Matrix", "Bleached_Hard_coral"
 species_colors <- rainbow(length(species_columns))
 species_shapes <- 1:length(species_columns)
 
-# for the bionomial
+# for the bionomial GLMM
 coverage_by_year_geomorphic_zone <- df %>%
   filter(year >= 2019 & year <= 2025) %>%
   mutate(geomorphic_zones = case_when(
@@ -401,7 +395,7 @@ geomorphic_zone_order <- c("Leeward Reef Slope North",
 
 result_data$geomorphic_zones <- factor(result_data$geomorphic_zones, levels = geomorphic_zone_order)
 
-#for glm
+#for glm plot
 ggplot(result_data, aes(x = new_date, y = prob, color = geomorphic_zones)) +
   geom_path() +
   geom_point() +
@@ -454,4 +448,409 @@ lapply(gam_models_binomial, function(x){as.data.frame(VarCorr(x))})
 # keep r2 cond - fixed and random effects together and r2 marg - just fixed effects
 compare_performance(gam_models_binomial)
 
+write.csv(result_data, "result_data.csv", row.names = FALSE)
 
+
+
+######
+#Check overdispersion
+library(performance)
+lapply(gam_models_binomial, check_overdispersion)
+
+
+
+
+## PART 2: Statistical comparisons
+modelDF$idyear_f <- factor(modelDF$idyear)
+
+## 2a. Crossed-factor refit (numerically equivalent to the timeZone
+## models above -- same fit, just written so contrasts can be split
+## "by zone" or "by time" separately)
+gam_models_crossed <- lapply(species_columns, function(species){
+  
+  modelDF$success = modelDF[, species]
+  modelDF$failure = rowSums(modelDF[, species_columns[species_columns != species]])
+  
+  glmer(cbind(success, failure) ~ geomorphic_zones * idyear_f + (1 | site),
+        data    = modelDF,
+        family  = binomial(link = "logit"),
+        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+})
+names(gam_models_crossed) <- species_columns
+
+# Sanity check: log-likelihood/df should match gam_models_binomial closely
+data.frame(
+  species         = species_columns,
+  logLik_timeZone = sapply(gam_models_binomial, logLik),
+  logLik_crossed  = sapply(gam_models_crossed, logLik)
+)
+
+# Confirm no overdispersion (already checked, kept here for the record)
+lapply(gam_models_crossed, check_overdispersion)
+
+## 2b. Zone-vs-zone comparisons, WITHIN each survey
+## -> "did zones differ from each other at this time point?"
+zone_contrasts_by_species <- lapply(species_columns, function(species){
+  mod <- gam_models_crossed[[species]]
+  emm <- emmeans(mod, ~ geomorphic_zones | idyear_f, type = "response")
+  contrast(emm, method = "pairwise", adjust = "tukey")
+})
+names(zone_contrasts_by_species) <- species_columns
+
+## 2c. Within-zone comparisons: every survey vs. the 2019 baseline
+## -> "has this zone changed relative to where it started?"
+baseline_level <- levels(modelDF$idyear_f)[1]  # confirm this is Nov 2019
+baseline_index <- match(baseline_level, levels(modelDF$idyear_f))
+
+baseline_contrasts_by_species <- lapply(species_columns, function(species){
+  mod <- gam_models_crossed[[species]]
+  emm <- emmeans(mod, ~ idyear_f | geomorphic_zones, type = "response")
+  contrast(emm, method = "trt.vs.ctrl", ref = baseline_index, adjust = "mvt")
+})
+names(baseline_contrasts_by_species) <- species_columns
+
+## 2d. Effect sizes (probability scale) for reporting in text --
+## with sample sizes this large, p-values alone are not very
+## informative (expect many near-zero); lead with the magnitude.
+baseline_contrasts_prob <- lapply(species_columns, function(species){
+  mod <- gam_models_crossed[[species]]
+  emm <- emmeans(mod, ~ idyear_f | geomorphic_zones, type = "response")
+  emm_prob <- regrid(emm, transform = "response")
+  contrast(emm_prob, method = "trt.vs.ctrl", ref = baseline_index, adjust = "mvt")
+})
+names(baseline_contrasts_prob) <- species_columns
+
+summary(baseline_contrasts_prob[["Live_Hard_coral"]])
+
+## 2e. Readable labels + export
+idyear_lookup <- unique(modelDF[, c("idyear", "year", "month")])
+idyear_lookup$survey_label <- paste0(idyear_lookup$month, "/", idyear_lookup$year)
+
+attach_labels <- function(df_out, time_col = "idyear_f") {
+  df_out$idyear <- as.numeric(as.character(df_out[[time_col]]))
+  merge(df_out, idyear_lookup[, c("idyear", "survey_label")], by = "idyear", all.x = TRUE)
+}
+
+# For the baseline contrasts: idyear_f was the CONTRASTED variable
+# (~ idyear_f | geomorphic_zones), so it's collapsed into the
+# "contrast" text (e.g. "2.833333 - 1.833333") rather than kept as its
+attach_baseline_labels <- function(df_out) {
+  raw <- as.character(df_out$contrast)
+  sep <- if (any(grepl(" / ", raw, fixed = TRUE))) " / " else " - "
+  compared_level <- vapply(strsplit(raw, sep, fixed = TRUE), `[`, character(1), 1)
+  compared_level <- gsub("idyear_f", "", compared_level, fixed = TRUE)
+  compared_level <- trimws(gsub("[()]", "", compared_level))
+  df_out$idyear <- as.numeric(compared_level)
+  merge(df_out, idyear_lookup[, c("idyear", "survey_label")], by = "idyear", all.x = TRUE)
+}
+
+for (sp in species_columns) {
+  write.csv(attach_labels(as.data.frame(zone_contrasts_by_species[[sp]])),
+            paste0("zone_contrasts_", sp, ".csv"), row.names = FALSE)
+  write.csv(attach_baseline_labels(as.data.frame(baseline_contrasts_by_species[[sp]])),
+            paste0("time_contrasts_vs_baseline_", sp, ".csv"), row.names = FALSE)
+  write.csv(attach_baseline_labels(as.data.frame(baseline_contrasts_prob[[sp]])),
+            paste0("time_contrasts_vs_baseline_probscale_", sp, ".csv"), row.names = FALSE)
+}
+
+baseline_contrasts_prob_df <- lapply(species_columns, function(sp){
+  df_out <- attach_baseline_labels(as.data.frame(baseline_contrasts_prob[[sp]]))
+  df_out$lci_95 <- df_out$estimate - 1.96 * df_out$SE
+  df_out$uci_95 <- df_out$estimate + 1.96 * df_out$SE
+  df_out
+})
+names(baseline_contrasts_prob_df) <- species_columns
+
+for (sp in species_columns) {
+  write.csv(baseline_contrasts_prob_df[[sp]],
+            paste0("time_contrasts_vs_baseline_probscale_", sp, ".csv"), row.names = FALSE)
+}
+
+
+
+
+#####
+# Random-slope check: do sites within a zone follow genuinely
+# different trajectories over time, or just different average levels?
+##
+## Current model: geomorphic_zones * idyear_f + (1 | site)
+##   -> every site in a zone assumed to follow the SAME trajectory,
+##      just shifted up/down by its own intercept.
+##
+## This model: geomorphic_zones * idyear_f + (1 + idyear | site)
+##   -> every site gets its own intercept AND its own linear trend
+##      over time (drawn from a distribution across sites).
+##
+## Note: the random slope uses continuous `idyear`, not the categorical
+## `idyear_f` used in the fixed effects. A random slope per level of a
+## 9-level factor would be heavily over-parameterized given how many
+## repeated observations you actually have per site; a single linear
+## trend per site is the practical version of this check.
+
+library(performance)
+
+gam_models_randslope <- lapply(species_columns, function(species){
+  
+  modelDF$success = modelDF[, species]
+  modelDF$failure = rowSums(modelDF[, species_columns[species_columns != species]])
+  
+  glmer(cbind(success, failure) ~ geomorphic_zones * idyear_f + (1 + idyear | site),
+        data    = modelDF,
+        family  = binomial(link = "logit"),
+        control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5)))
+})
+
+names(gam_models_randslope) <- species_columns
+
+## Check convergence and singularity FIRST -- with ~9 time points
+sapply(gam_models_randslope, performance::check_convergence)
+sapply(gam_models_randslope, performance::check_singularity)
+
+lrt_results <- mapply(function(simple, slope) anova(simple, slope),
+                      gam_models_crossed, gam_models_randslope, SIMPLIFY = FALSE)
+names(lrt_results) <- species_columns
+
+lrt_results
+
+## A significant LRT here means the random-slope model fits
+## meaningfully better -- i.e., sites within zones really do follow
+## different trajectories, not just different average levels. This
+## is worth a sentence in the Discussion supporting the existing
+## claim about intra-zone variability, backed by a formal test rather
+## than an eyeballed observation.
+
+# Inspect the estimated site-level slope variance directly, regardless
+# of convergence status, for a qualitative read on how much spread
+# there is across sites:
+lapply(gam_models_randslope, function(m) as.data.frame(VarCorr(m)))
+
+
+
+#####
+## Redo contrasts using the random-slope model as primary, now that
+## the LRT shows it fits substantially better than the intercept-only version. 
+
+library(emmeans)
+
+## Inspect variance components first -- what IS the actual magnitude
+## of site-level trend variation, in interpretable terms?
+var_components <- lapply(gam_models_randslope, function(m) as.data.frame(VarCorr(m)))
+var_components
+
+## Zone-vs-zone contrasts, within each survey (same logic as before)
+zone_contrasts_by_species_v2 <- lapply(species_columns, function(species){
+  mod <- gam_models_randslope[[species]]
+  emm <- emmeans(mod, ~ geomorphic_zones | idyear_f, type = "response")
+  contrast(emm, method = "pairwise", adjust = "tukey")
+})
+names(zone_contrasts_by_species_v2) <- species_columns
+
+## Each zone vs. its own 2019 baseline (odds-ratio scale)
+library(emmeans)
+
+baseline_level <- levels(modelDF$idyear_f)[1]  # confirm this is Nov 2019
+baseline_index <- match(baseline_level, levels(modelDF$idyear_f))
+
+baseline_contrasts_prob_v2 <- lapply(species_columns, function(species){
+  mod <- gam_models_randslope[[species]]
+  emm <- emmeans(mod, ~ idyear_f | geomorphic_zones, type = "response")
+  emm_prob <- regrid(emm, transform = "response")
+  contrast(emm_prob, method = "trt.vs.ctrl", ref = baseline_index, adjust = "mvt")
+})
+names(baseline_contrasts_prob_v2) <- species_columns
+
+
+## Add 95% CI columns before exporting
+baseline_contrasts_prob_v2_df <- lapply(species_columns, function(sp){
+  df_out <- attach_baseline_labels(as.data.frame(baseline_contrasts_prob_v2[[sp]]))
+  df_out$lci_95 <- df_out$estimate - 1.96 * df_out$SE
+  df_out$uci_95 <- df_out$estimate + 1.96 * df_out$SE
+  df_out
+})
+names(baseline_contrasts_prob_v2_df) <- species_columns
+
+for (sp in species_columns) {
+  write.csv(baseline_contrasts_prob_v2_df[[sp]],
+            paste0("time_contrasts_vs_baseline_probscale_randomslope_", sp, ".csv"), row.names = FALSE)
+}
+
+## Probability-scale version, for reporting magnitudes in text
+## Add 95% CI columns before exporting
+baseline_level <- levels(modelDF$idyear_f)[1]
+baseline_index <- match(baseline_level, levels(modelDF$idyear_f))
+
+baseline_contrasts_prob_v2 <- lapply(species_columns, function(species){
+  mod <- gam_models_randslope[[species]]
+  emm <- emmeans(mod, ~ idyear_f | geomorphic_zones, type = "response")
+  emm_prob <- regrid(emm, transform = "response")
+  contrast(emm_prob, method = "trt.vs.ctrl", ref = baseline_index, adjust = "mvt")
+})
+names(baseline_contrasts_prob_v2) <- species_columns
+
+for (sp in species_columns) {
+  write.csv(baseline_contrasts_prob_v2_df[[sp]],
+            paste0("time_contrasts_vs_baseline_probscale_randomslope_", sp, ".csv"), row.names = FALSE)
+}
+
+## Compare old vs. new estimates directly for the key zones (e.g.
+## windward west and windward east) to see how much the numbers moved
+## once site-level trend heterogeneity is properly accounted for
+compare_estimates <- function(species){
+  old <- as.data.frame(baseline_contrasts_prob[[species]])[, c("contrast", "geomorphic_zones", "estimate", "SE")]
+  new <- as.data.frame(baseline_contrasts_prob_v2[[species]])[, c("contrast", "geomorphic_zones", "estimate", "SE")]
+  merge(old, new, by = c("contrast", "geomorphic_zones"), suffixes = c("_intercept_only", "_random_slope"))
+}
+
+
+compare_estimates("Live_Hard_coral")
+
+## Export the updated (v2) contrasts with the same labeling helpers
+idyear_lookup <- unique(modelDF[, c("idyear", "year", "month")])
+idyear_lookup$survey_label <- paste0(idyear_lookup$month, "/", idyear_lookup$year)
+
+attach_labels <- function(df_out, time_col = "idyear_f") {
+  df_out$idyear <- as.numeric(as.character(df_out[[time_col]]))
+  merge(df_out, idyear_lookup[, c("idyear", "survey_label")], by = "idyear", all.x = TRUE)
+}
+
+attach_baseline_labels <- function(df_out) {
+  raw <- as.character(df_out$contrast)
+  sep <- if (any(grepl(" / ", raw, fixed = TRUE))) " / " else " - "
+  compared_level <- vapply(strsplit(raw, sep, fixed = TRUE), `[`, character(1), 1)
+  compared_level <- gsub("idyear_f", "", compared_level, fixed = TRUE)
+  compared_level <- trimws(gsub("[()]", "", compared_level))
+  df_out$idyear <- as.numeric(compared_level)
+  merge(df_out, idyear_lookup[, c("idyear", "survey_label")], by = "idyear", all.x = TRUE)
+}
+
+for (sp in species_columns) {
+  write.csv(attach_labels(as.data.frame(zone_contrasts_by_species_v2[[sp]])),
+            paste0("zone_contrasts_randomslope_", sp, ".csv"), row.names = FALSE)
+  write.csv(attach_baseline_labels(as.data.frame(baseline_contrasts_by_species_v2[[sp]])),
+            paste0("time_contrasts_vs_baseline_randomslope_", sp, ".csv"), row.names = FALSE)
+  write.csv(attach_baseline_labels(as.data.frame(baseline_contrasts_prob_v2[[sp]])),
+            paste0("time_contrasts_vs_baseline_probscale_randomslope_", sp, ".csv"), row.names = FALSE)
+}
+
+
+#####
+## Regenerate Figure 4 using the random-slope model, for consistency
+## with the CIs now reported in Results/Methods. Same plotting code as
+## before -- only the source of the predictions changes.
+
+# Unique zone x survey combinations actually present in the data
+new_data_v2 <- unique(modelDF[, c("geomorphic_zones", "idyear_f", "idyear")])
+new_data_v2 <- new_data_v2[order(new_data_v2$idyear, new_data_v2$geomorphic_zones), ]
+
+# Population-level (fixed-effects only) predictions -- re.form = NA
+# excludes BOTH the random intercept and random slope for site, giving
+# the zone-level average trajectory, same interpretation as your
+# original Figure 4 (which also used re.form = NA).
+result_data_v2 <- do.call("rbind", lapply(species_columns, function(species){
+  preds <- as.data.frame(predict(gam_models_randslope[[species]],
+                                 newdata = new_data_v2,
+                                 re.form = NA, se.fit = TRUE))
+  cbind(new_data_v2, preds, species = species)
+}))
+
+result_data_v2$lci <- plogis(result_data_v2$fit - 1.96 * result_data_v2$se.fit)
+result_data_v2$uci <- plogis(result_data_v2$fit + 1.96 * result_data_v2$se.fit)
+result_data_v2$prob <- plogis(result_data_v2$fit)
+
+result_data_v2$species <- factor(result_data_v2$species,
+                                 levels = c("Live_Hard_coral", "Bleached_Hard_coral", "EAM_Reef_Matrix"))
+
+## Quick sanity check before replotting: compare old vs new predicted
+## proportions and CI widths directly, to confirm predictions moved
+## little but CI width increased (as expected)
+compare_fig4 <- merge(
+  result_data[, c("idyear", "geomorphic_zones", "species", "prob", "lci", "uci")],
+  result_data_v2[, c("idyear", "geomorphic_zones", "species", "prob", "lci", "uci")],
+  by = c("idyear", "geomorphic_zones", "species"),
+  suffixes = c("_intercept_only", "_random_slope")
+)
+compare_fig4$ci_width_intercept_only <- compare_fig4$uci_intercept_only - compare_fig4$lci_intercept_only
+compare_fig4$ci_width_random_slope  <- compare_fig4$uci_random_slope  - compare_fig4$lci_random_slope
+compare_fig4[, c("idyear", "geomorphic_zones", "species",
+                 "prob_intercept_only", "prob_random_slope",
+                 "ci_width_intercept_only", "ci_width_random_slope")]
+
+## Re-apply the same date reconstruction and plotting code as before,
+## now on result_data_v2
+result_data_v2$new_date <- idyear_to_date(result_data_v2$idyear) +
+  seq(-15,15, len=4)[c(1,4,2,3)][result_data_v2$geomorphic_zones]
+
+result_data_v2$geomorphic_zones <- factor(result_data_v2$geomorphic_zones, levels = geomorphic_zone_order)
+
+ggplot(result_data_v2, aes(x = new_date, y = prob, color = geomorphic_zones)) +
+  geom_path() +
+  geom_point() +
+  geom_vline(xintercept = as.Date("2025-03-15"), linetype = "dashed", color = "black", size = 0.5) +
+  geom_segment(aes(x = new_date, y = uci, yend = lci)) +
+  facet_wrap(~ species, ncol = 1) +
+  annotate("rect", xmin = as.Date("2024-01-01"), xmax = as.Date("2024-05-31"),
+           ymin = -Inf, ymax = Inf, fill = "gray50", alpha = 0.4) +
+  annotate("rect", xmin = as.Date("2020-02-15"), xmax = as.Date("2020-05-31"),
+           ymin = -Inf, ymax = Inf, fill = "gray50", alpha = 0.4) +
+  scale_color_manual(values = species_colors) +
+  labs(title = "", x = "", y = "Predicted Proportion", color = "Geomorphic Zone") +
+  scale_x_date(date_labels = "%Y-%m", breaks = field_season_dates) +
+  theme(legend.position = "right",
+        axis.ticks.length = unit(1, "mm"),
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_rect(color = "black", fill = NA, size = 1),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        panel.background = element_blank(),
+        strip.background = element_blank(),
+        strip.text.x = element_blank())
+
+ggsave("Heron GLMM Figure 4 (random slope model).pdf", width = 10, height = 8, bg = "white")
+
+write.csv(result_data_v2, "result_data_randomslope.csv", row.names = FALSE)
+
+## Model summary tables for the random-slope model
+
+extract_term_info <- function(term){
+  if (term == "(Intercept)") return(c(zone = NA_character_, time = NA_character_))
+  pieces <- strsplit(term, ":", fixed = TRUE)[[1]]
+  zone <- NA_character_
+  time_val <- NA_character_
+  for (p in pieces) {
+    if (startsWith(p, "geomorphic_zones")) {
+      zone <- sub("^geomorphic_zones", "", p)
+    } else if (startsWith(p, "idyear_f")) {
+      time_val <- sub("^idyear_f", "", p)
+    }
+  }
+  c(zone = zone, time = time_val)
+}
+
+mapply(x = gam_models_randslope, n = 1:3, function(x, n){
+  coefs <- summary(x)$coefficients
+  rn <- rownames(coefs)
+  
+  term_info <- t(sapply(rn, extract_term_info))
+  
+  survey_time <- paste0(modelDF$month, "/", modelDF$year)[
+    match(as.numeric(term_info[, "time"]), modelDF$idyear)
+  ]
+  
+  coefMat <- cbind(Term = rn,
+                   Zone = term_info[, "zone"],           # NA = reference zone (main effect only)
+                   `Survey time` = survey_time,            # NA = reference time (main effect only)
+                   apply(coefs, 2, function(y){sprintf("%.3f", y)}))
+  
+  write.csv(coefMat, paste0("./modelSummaryTable_randomslope_",
+                            c("Live", "Bleached", "EAM")[n],
+                            ".csv"), row.names = FALSE)
+})
+
+# random effect variance -- will now show TWO variance components per
+# model (intercept and slope for site) plus their correlation, instead
+# of just the single intercept variance from before
+lapply(gam_models_randslope, function(x){as.data.frame(VarCorr(x))})
+
+# pseudo-R2: conditional (fixed + random) vs marginal (fixed only)
+compare_performance(gam_models_randslope)
