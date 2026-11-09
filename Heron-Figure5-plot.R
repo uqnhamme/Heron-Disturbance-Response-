@@ -360,13 +360,3 @@ targeted_summary$p.adjusted_holm <- ave(targeted_summary$p.value, targeted_summa
 targeted_summary
 write.csv(targeted_summary, "permanova_pairwise_targeted_summary_FINAL.csv", row.names = FALSE)
 
-
-## Check: confirm no zone/event combination was silently
-## dropped (e.g. if a zone had zero transects at one of the three
-## target events, that comparison can't be computed)
-table(species_data_relativized$survey_event[species_data_relativized$survey_event %in% target_events],
-      species_data_relativized$geomorphic_zones[species_data_relativized$survey_event %in% target_events])
-
-
-
-
