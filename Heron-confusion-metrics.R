@@ -18,8 +18,7 @@ period_files <- c(
 )
 
 
-## Generalized: takes the column-pair to compare, so the same
-## function computes both the group-level and finer-level tables
+
 compute_period_metrics <- function(filepath, period_label, true_col, predicted_col) {
   
   data <- read.csv(filepath)
@@ -80,7 +79,7 @@ all_period_metrics
 write.csv(all_period_metrics, "classification_metrics_full.csv", row.names = FALSE)
 
 ## Focus view: key group-level classes
-key_group_classes <- c("HC", "HCB", "A")   # confirm these match your actual group codes
+key_group_classes <- c("HC", "HCB", "A")  
 
 all_period_metrics %>%
   filter(label_level == "Group" & class %in% key_group_classes) %>%
