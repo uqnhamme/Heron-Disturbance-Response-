@@ -109,11 +109,6 @@ df$survey_event <- factor(df$survey_event, levels = survey_order)
 levels(df$survey_event)   # confirm this looks right before proceeding
 
 ## FIGURE S2: Percent coral cover by zone, over time
-## ASSUMPTION: this is the RAW OBSERVED (not model-fitted) hard-coral
-## percentage per photo i.e. Live_Hard_coral as a fraction of ALL
-## substrate (not restricted to hard substrate only), since the axis
-## says "Percent Coral Cover" generically rather than the
-## hard-substrate-conditional language used for the GLMM.
 
 df$pct_coral_cover_all_substrate <- df$Live_Hard_coral   # % of ALL points, not just hard substrate
 
@@ -146,8 +141,7 @@ write.csv(s2_data, "FigureS2_data.csv", row.names = FALSE)
 ## cover (S4) of the 5 morphotypes, by zone, over the full survey
 ## time series
 
-## S4 first: absolute percent cover, straight from df (each
-## morphotype's raw % of ALL points in that photo), transect-level SE
+## S4 first: absolute percent cover
 
 s4_summary <- summarise_by_transect_then_zone(
   df, value_cols = morphotype_cols,
@@ -219,13 +213,9 @@ ggplot(s3_summary, aes(x = survey_event, y = mean, fill = morphotype)) +
 ggsave("FigureS3_relative_abundance.pdf", width = 10, height = 8, bg = "white")
 write.csv(s3_summary, "FigureS3_data.csv", row.names = FALSE)
 
-## Note: S3/S4 error bars omitted from the stacked-bar plots above
-## (stacked bars with per-segment error bars get visually unreadable)
+
 
 ## FIGURE S5: Percent rubble cover by zone, over time
-## ASSUMPTION: "rubble cover" = the "epilithic algal matrix on rubble"
-## label specifically (the sub-component of turf-on-dead-coral used
-## as the cyclone/structural-collapse indicator)
 
 s5_data <- summarise_by_transect_then_zone(
   df, value_cols = "rubble_pct_raw",
