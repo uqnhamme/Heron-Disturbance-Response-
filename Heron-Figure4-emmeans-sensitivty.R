@@ -475,9 +475,7 @@ images_retained_table %>%
   ungroup() %>%
   select(geomorphic_zones, idyear_f, n_transects, median_transects_this_zone, n_photos)
 
-## PART B: Sensitivity analysis -- consistently-resampled transects only
-## Identify which transects were sampled at EVERY one of the 9 survey
-## events
+## PART B: Sensitivity analysis - consistently-resampled transects only
 n_surveys_total <- n_distinct(modelDF$idyear_f)
 
 site_survey_counts <- modelDF %>%
@@ -523,8 +521,7 @@ gam_models_balanced <- list(
   Bleached_Hard_coral_pts = fit_randomslope("Bleached_Hard_coral_pts", modelDF_balanced)
 )
 
-# Check convergence/singularity on the balanced-panel models before
-# trusting them
+
 lapply(gam_models_balanced, performance::check_singularity)
 
 ## Same baseline-vs-Oct2019 contrasts as the full-panel analysis
@@ -565,7 +562,6 @@ sensitivity_comparison
 write.csv(sensitivity_comparison, "sensitivity_analysis_comparison_LiveHardCoral_TableS9.csv", row.names = FALSE)
 
 ## Flag any comparison where the conclusion (sign + significance)
-## actually flips between the full and balanced panel
 sensitivity_comparison %>%
   mutate(
     sig_full     = p.value_full < 0.05,
