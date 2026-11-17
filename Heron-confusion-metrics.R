@@ -43,7 +43,7 @@ compute_period_metrics <- function(filepath, period_label, true_col, predicted_c
     rownames(byclass) <- NULL
   } else {
     byclass <- as.data.frame(t(cm$byClass))
-    byclass$class <- levels(true)[2]   # caret's 2-class convention: second level is "positive"
+    byclass$class <- levels(true)[2]   
   }
   
   support <- as.data.frame(table(true))
