@@ -83,9 +83,8 @@ morphotype_pairs <- tribble(
 )
 
 ## STEP 1: filter to March 2024, assign zones, and compute each
-## photo's RELATIVE abundance (% of total coral cover -- healthy +
-## bleached, across all 5 morphotypes -- that this morphotype/status
-## represents). This is per-photo, same as before.
+## photo's RELATIVE abundance (% of total coral cover, healthy +
+## bleached, across all 5 morphotypes)
 coverage_2024_photo <- df %>%
   filter(year == 2024 & month == "03") %>%
   mutate(geomorphic_zones = case_when(
@@ -100,7 +99,7 @@ coverage_2024_photo <- df %>%
   mutate(across(all_of(species_columns), ~ . / total * 100)) %>%
   select(-total)
 
-## STEP 2: collapse to one row PER TRANSECT first -- mean
+## STEP 2: collapse to one row PER TRANSECT first
 ## relative abundance across that transect's photos.
 coverage_2024_transect <- coverage_2024_photo %>%
   group_by(geomorphic_zones, site) %>%
