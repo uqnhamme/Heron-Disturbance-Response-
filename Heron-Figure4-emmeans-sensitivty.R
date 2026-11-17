@@ -183,9 +183,7 @@ levels(modelDF$idyear_f)
 ## BINOMIAL GLMM first, on the SAME corrected trial counts and SAME
 ## random-effects structure as the final models, then test for
 ## overdispersion via DHARMa's simulation-based testDispersion()
-## (Hartig 2024). DHARMa simulates new response data from the
-## fitted model, computes scaled (quantile) residuals, and compares
-## the variance of the simulated data to the observed data directly
+## (Hartig 2024).
 
 library(lme4)
 library(DHARMa)
@@ -539,9 +537,7 @@ names(baseline_contrasts_balanced) <- names(gam_models_balanced)
 
 summary(baseline_contrasts_balanced[["Live_Hard_coral_pts"]])
 
-## Direct comparison: full panel vs. balanced panel, for specific
-## claims (windward west recovery, windward east
-## persistent decline, reef flat return to baseline)
+## Direct comparison: full panel vs. balanced panel
 compare_sensitivity <- function(species){
   full_df <- as.data.frame(baseline_contrasts_prob_final[[species]])
   bal_df  <- as.data.frame(baseline_contrasts_balanced[[species]])
