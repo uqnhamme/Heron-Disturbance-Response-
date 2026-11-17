@@ -165,8 +165,7 @@ make_nmds_panel <- function(zone_name, panel_title, subtitle = NULL, xlab = "", 
 zone_colors <- c('Leeward Reef Slope North' = '#FF7F50', 'Windward Reef Slope East' = '#009E73',
                  'Windward Reef Slope West' = '#56B4E9', 'Reef Flat' = '#F0E442')
 
-## Panel A: overall ordination, all zones pooled (reuses nmds,
-## species_scores, stress_value already computed above)
+## Panel A: overall ordination, all zones pooled
 panel_A <- ggplot(nmds_data, aes(x = NMDS1, y = NMDS2, color = geomorphic_zones)) +
   geom_point(size = 2, alpha = 0.5, shape = 16) +
   stat_ellipse(level = 0.95, linewidth = 0.5) +
@@ -207,13 +206,12 @@ names(zone_nmds_results) <- zone_names_ordered
 
 sapply(zone_nmds_results, function(x) x$stress)
 
-## Shared axis limits across B-E, computed after all 4 zone
-## ordinations are fit, before any panels are plotted
+
 all_zone_points <- do.call(rbind, lapply(zone_nmds_results, function(res) {
   as.data.frame(res$nmds$points)
 }))
 
-axis_pad <- 0.05  # small padding so points aren't flush against the panel border
+axis_pad <- 0.05  
 shared_xlim <- range(all_zone_points$MDS1) + c(-axis_pad, axis_pad)
 shared_ylim <- range(all_zone_points$MDS2) + c(-axis_pad, axis_pad)
 
@@ -274,9 +272,7 @@ figure5_final <- panel_A | right_grid
 ggsave("Figure5_nMDS_overall_and_byzone.pdf", plot = figure5_final, width = 16, height = 8, bg = "white")
 
 
-## PERMANOVA + dispersion, re-attached to the event-level-
-## Run this after Heron-revised.R (needs species_data_relativized,
-## bc_dist, and survey_event already built).
+## PERMANOVA + dispersion
 
 library(vegan)
 source("https://raw.githubusercontent.com/pmartinezarbizu/pairwiseAdonis/master/pairwiseAdonis/R/pairwise.adonis.R")
