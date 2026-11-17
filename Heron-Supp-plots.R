@@ -35,13 +35,11 @@ df <- subset(df, select = -c(DO.NOT.USE..Soft.Coral.Other.Bleached,
                              DO.NOT.USE..Acroporidae..Isopora.spp..Branching.Encrusting.Bleached, DO.NOT.USE..Poritidae..Porites.spp..Branching.Bleached,
                              Transect.gear, Shadow, Fish, unique_id, survey_title, image_name, depth_m, transect, total, project, survey_id, site_id, site_reef_name, site_country_region, site_local_region))
 
-## Capture the raw rubble label BEFORE it gets combined into
-## EAM_Reef_Matrix below (needed for Figure S5)
+## Capture the raw rubble label
 df$rubble_pct_raw <- df$Epithelial.Algal.Matrix.on.Rubble
 
 ## Combine raw ReefCloud labels into the 5 morphotype categories,
 ## KEPT SEPARATE (needed for S3/S4), same convention as the Figure 3
-## rebuild: singular "Branching_coral" from Corymbose+Digitate+Branching.
 Branching_corals_columns <- c("Acroporidae.Arborescent", "Acroporidae..Acropora.spp..Hispidose",
                               "Branching.Other", "Poritidae..Porites.spp..Branching", "Acroporidae..Isopora.spp..Branching.Encrusting",
                               "Pocilloporidae")
@@ -68,8 +66,7 @@ df <- df[, !(names(df) %in% c("Corymbose_corals", "Digitate_corals", "Branching_
 morphotype_cols <- c("Massive_Encrusting_corals", "Free_Living_corals", "Branching_coral",
                      "Plate_Foliose_corals", "Tabulate_corals")
 
-## Live_Hard_coral (for S2) = sum of the 5 morphotypes, WITHOUT
-## removing the individual morphotype columns (S3/S4 still need them)
+## Live_Hard_coral (for S2) = sum of the 5 morphotypes
 df$Live_Hard_coral <- rowSums(df[, morphotype_cols])
 
 ## Dates, zones, survey_event
@@ -86,9 +83,7 @@ df <- df |> mutate(geomorphic_zones = case_when(
 
 df <- df %>% filter(year >= 2019 & year <= 2025)
 
-## Exclude the same intermediate surveys the main GLMM/nMDS analyses
-## exclude (May 2024, August 2024, March 2025), so S2-S5 use the same
-## 9 curated survey events as the rest of the paper rather than the
+## S2-S5 use the same 9 curated survey events as the rest of the paper rather than the
 ## full set of raw survey dates.
 df <- df[!((df$year == 2024 & df$month %in% c(5, 8)) | (df$year == 2025 & df$month == 3)), ]
 
@@ -106,11 +101,11 @@ survey_order <- df %>%
   pull(survey_event)
 df$survey_event <- factor(df$survey_event, levels = survey_order)
 
-levels(df$survey_event)   # confirm this looks right before proceeding
+levels(df$survey_event)   
 
 ## FIGURE S2: Percent coral cover by zone, over time
 
-df$pct_coral_cover_all_substrate <- df$Live_Hard_coral   # % of ALL points, not just hard substrate
+df$pct_coral_cover_all_substrate <- df$Live_Hard_coral   
 
 s2_data <- summarise_by_transect_then_zone(
   df, value_cols = "pct_coral_cover_all_substrate",
@@ -153,7 +148,6 @@ s4_summary <- summarise_by_transect_then_zone(
                names_pattern = "(.+)_(mean|se)")
 
 ## Same clean display labels as S3
-## first in the script -- reused for S3 below
 morphotype_display_names <- c(
   "Massive_Encrusting_corals" = "Massive / Encrusting",
   "Free_Living_corals"        = "Free Living",
